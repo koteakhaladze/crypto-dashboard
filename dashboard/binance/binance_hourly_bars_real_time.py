@@ -1,6 +1,7 @@
 import asyncio
 import json
 import pandas as pd
+import websockets
 
 from dashboard.common.const import LIST_SYMBOLS
 
