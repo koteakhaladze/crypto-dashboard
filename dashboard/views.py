@@ -1,11 +1,9 @@
 # dashboard/views.py
-import asyncio
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from dashboard.background_tasks import BackgroundTasks
-from dashboard.binance.binance_hourly_bars_real_time import WebSocketClient
 from dashboard.common.const import LIST_SYMBOLS
 from .storage import FileStorage
 from django.contrib.auth.decorators import login_required
