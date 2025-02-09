@@ -1,0 +1,277 @@
+
+<!-- dashboard/templates/dashboard/backtest.html -->
+{% extends 'dashboard/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid p-4">
+    {% csrf_token %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <label>Start Date</label>
+            <input type="date" id="start-date" class="form-control bg-dark text-light" 
+                   value="{{ default_start|date:'Y-m-d' }}">
+        </div>
+        <div class="col-md-4">
+            <label>Symbol</label>
+            <select id="symbol" class="form-control bg-dark text-light">
+                {% for symbol in symbols %}
+                    <option value="{{ symbol }}">{{ symbol }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label>Sensitivity</label>
+            <input type="number" id="sensitivity" class="form-control bg-dark text-light" 
+                   value="{{ default_sensitivity }}" step="0.1" min="0.1" max="5.0">
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <label>End Date</label>
+            <input type="date" id="end-date" class="form-control bg-dark text-light" 
+                   value="{{ default_end|date:'Y-m-d' }}">
+        </div>
+        <div class="col-md-4">
+            <label>Timeframe</label>
+            <select id="timeframe" class="form-control bg-dark text-light">
+                {% for tf in timeframes %}
+                    <option value="{{ tf }}">{{ tf }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label>ATR Period</label>
+            <input type="number" id="atr-period" class="form-control bg-dark text-light" 
+                   value="{{ default_atr_period }}" min="5" max="50">
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col">
+            <button id="run-backtest" class="btn btn-primary">Run Backtest</button>
+        </div>
+    </div>
+
+    <div id="chart-container" class="mt-4" style="height: 800px;"></div>
+
+    <div class="row mt-4">
+        <div class="col-md-3">
+            <div class="card bg-dark text-light">
+                <div class="card-body">
+                    <h5 class="card-title">Total Return</h5>
+                    <p class="card-text" id="total-return">-</p>
+                </div>
+            </div>
+        </div>
+        <!-- Add more metric cards -->
+    </div>
+
+    <div class="mt-4">
+        <h3 class="text-light">Monthly Returns (%)</h3>
+        <div id="pnl-table"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://code.highcharts.com/stock/highstock.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('run-backtest').addEventListener('click', function() {
+        const params = {
+            start_date: document.getElementById('start-date').value,
+            end_date: document.getElementById('end-date').value,
+            symbol: document.getElementById('symbol').value,
+            timeframe: document.getElementById('timeframe').value,
+            sensitivity: document.getElementById('sensitivity').value,
+            atr_period: document.getElementById('atr-period').value
+        };
+
+        fetch('/run_backtest/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: JSON.stringify(params)
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log(data);
+            if (data.success) {
+                updateChart(data.data.signals);
+                updateMetrics(data.data.metrics);
+                updatePnLTable(data.data.pnl_table);
+            }
+        });
+    });
+
+    function getCookie(name) {
+        // Django CSRF token getter implementation
+    }
+
+    function updateChart(signals) {
+    const chartConfig = {
+        chart: {
+            height: 800,
+            backgroundColor: '#0E1117',
+            style: {color: '#FFFFFF'}
+        },
+        title: {
+            text: `Trading Strategy - ${document.getElementById('symbol').value} ${document.getElementById('timeframe').value}`,
+            style: {color: '#FFFFFF'}
+        },
+        series: [
+            {
+                type: 'candlestick',
+                name: 'Price',
+                data: signals.map(x => [
+                    new Date(x.Datetime).getTime(),
+                    parseFloat(x.Open),
+                    parseFloat(x.High),
+                    parseFloat(x.Low),
+                    parseFloat(x.Close)
+                ])
+            },
+            {
+                type: 'scatter',
+                name: 'Buy Signals',
+                data: signals.filter(x => x.Buy).map(x => ({
+                    x: new Date(x.Datetime).getTime(),
+                    y: parseFloat(x.Low),
+                    marker: {symbol: 'triangle', fillColor: '#00FF00'}
+                }))
+            },
+            {
+                type: 'scatter',
+                name: 'Sell Signals',
+                data: signals.filter(x => x.Sell).map(x => ({
+                    x: new Date(x.Datetime).getTime(),
+                    y: parseFloat(x.High),
+                    marker: {symbol: 'triangle-down', fillColor: '#FF0000'}
+                }))
+            }
+        ]
+    };
+
+    Highcharts.stockChart('chart-container', chartConfig);
+}
+
+function updateMetrics(metrics) {
+    // Create an array of metrics to display
+    const metricsToDisplay = [
+        { label: 'Total Return', value: `${metrics['Total Return [%]'].toFixed(2)}%` },
+        { label: 'Benchmark Return', value: `${metrics['Benchmark Return [%]'].toFixed(2)}%` },
+        { label: 'Max Drawdown', value: `${metrics['Max Drawdown [%]'].toFixed(2)}%` },
+        { label: 'Total Trades', value: metrics['Total Trades'] },
+        { label: 'Win Rate', value: `${metrics['Win Rate [%]'].toFixed(2)}%` },
+        { label: 'Profit Factor', value: metrics['Profit Factor'].toFixed(2) },
+        { label: 'Sharpe Ratio', value: metrics['Sharpe Ratio'].toFixed(2) },
+        { label: 'Best Trade', value: `${metrics['Best Trade [%]'].toFixed(2)}%` },
+        { label: 'Worst Trade', value: `${metrics['Worst Trade [%]'].toFixed(2)}%` }
+    ];
+
+    // Clear existing metric cards
+    const metricsContainer = document.querySelector('.row.mt-4');
+    metricsContainer.innerHTML = '';
+
+    // Create and append metric cards
+    metricsToDisplay.forEach(metric => {
+        const col = document.createElement('div');
+        col.className = 'col-md-3';
+        
+        const card = document.createElement('div');
+        card.className = 'card bg-dark text-light mb-3';
+        
+        const cardBody = document.createElement('div');
+        cardBody.className = 'card-body';
+        
+        const cardTitle = document.createElement('h5');
+        cardTitle.className = 'card-title';
+        cardTitle.textContent = metric.label;
+        
+        const cardText = document.createElement('p');
+        cardText.className = 'card-text';
+        cardText.textContent = metric.value;
+        
+        cardBody.appendChild(cardTitle);
+        cardBody.appendChild(cardText);
+        card.appendChild(cardBody);
+        col.appendChild(card);
+        
+        metricsContainer.appendChild(col);
+    });
+}
+function updatePnLTable(pnlData) {
+    const tableContainer = document.getElementById('pnl-table');
+    
+    // Get unique years dynamically
+    const years = Object.keys(
+        Object.values(pnlData).reduce((acc, monthData) => {
+            Object.keys(monthData).forEach(year => {
+                acc[year] = true;
+            });
+            return acc;
+        }, {})
+    ).sort();
+    
+    // Create table element
+    const table = document.createElement('table');
+    table.className = 'table table-dark table-striped table-bordered';
+    
+    // Create table header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    
+    // Add Month column
+    const monthHeader = document.createElement('th');
+    monthHeader.textContent = 'Month';
+    headerRow.appendChild(monthHeader);
+    
+    // Add year columns dynamically
+    years.forEach(year => {
+        const yearHeader = document.createElement('th');
+        yearHeader.textContent = year;
+        headerRow.appendChild(yearHeader);
+    });
+    
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    
+    // Create table body
+    const tbody = document.createElement('tbody');
+    
+    // Months in order
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Year'];
+    
+    months.forEach(month => {
+        const row = document.createElement('tr');
+        
+        // Month name
+        const monthCell = document.createElement('td');
+        monthCell.textContent = month;
+        row.appendChild(monthCell);
+        
+        // Add value for each year
+        years.forEach(year => {
+            const yearCell = document.createElement('td');
+            yearCell.textContent = pnlData[month][year] !== undefined 
+                ? pnlData[month][year].toFixed(2) 
+                : '-';
+            row.appendChild(yearCell);
+        });
+        
+        tbody.appendChild(row);
+    });
+    
+    table.appendChild(tbody);
+    
+    // Clear previous content and add new table
+    tableContainer.innerHTML = '';
+    tableContainer.appendChild(table);
+}
+});
+</script>
+{% endblock %}

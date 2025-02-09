@@ -1,0 +1,156 @@
+{% extends 'dashboard/base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid p-4">
+    <div id="crypto-grid" class="ag-theme-material-dark" style="height: 600px; width: 100%;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise/dist/ag-grid-enterprise.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-grid.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-theme-material-dark.css">
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const gridOptions = {
+        columnDefs: [
+            { 
+                field: "Symbol", 
+                pinned: 'left',
+                cellStyle: { fontWeight: 'bold' }
+            },
+            { 
+                field: "Price",
+                type: "numericColumn",
+                valueFormatter: params => {
+                    if (!params.value) return '';
+                    return params.value.toFixed(5);
+                },
+                cellRenderer: params => {
+                    if (!params.value) return '';
+                    const change = params.data.Change;
+                    const prevPrice = params.data.PrevPrice;
+                    const arrow = change > 0 ? '▲' : (change < 0 ? '▼' : '');
+                    return `${params.value.toFixed(5)} ${arrow}`;
+                },
+                cellStyle: params => {
+                    const change = params.data?.Change;
+                    const prevPrice = params.data?.PrevPrice;
+                    if (prevPrice === undefined) return {};
+                    
+                    // Green if price increased, red if decreased
+                    if (params.value > prevPrice) {
+                        return { backgroundColor: 'rgba(25, 135, 84, 0.3)', color: 'white' };
+                    }
+                    if (params.value < prevPrice) {
+                        return { backgroundColor: 'rgba(220, 53, 69, 0.3)', color: 'white' };
+                    }
+                    return {};
+                }
+            },
+            { 
+                field: "Change", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(2),
+                cellStyle: params => {
+                    const change = params.value;
+                    if (change > 0) return { color: '#28a745' };
+                    if (change < 0) return { color: '#dc3545' };
+                    return {};
+                }
+            },
+            { 
+                field: "SMA10", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(3)
+            },
+            { 
+                field: "SMA100", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(3) 
+            },
+            { 
+                field: "MACD", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(3)
+            },
+            { 
+                field: "RSI", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(2),
+                cellStyle: params => {
+                    const rsi = params.value;
+                    const prevRSI = params.data?.PrevRSI;
+                    
+                    // Soft green/red highlighting based on change
+                    if (prevRSI === undefined) return {};
+                    
+                    if (rsi > prevRSI) {
+                        return { backgroundColor: 'rgba(25, 135, 84, 0.3)', color: 'white' };
+                    }
+                    if (rsi < prevRSI) {
+                        return { backgroundColor: 'rgba(220, 53, 69, 0.3)', color: 'white' };
+                    }
+                    return {};
+                },
+                cellRenderer: params => {
+                    const rsi = params.value;
+                    // Add color-coded indicators based on RSI levels
+                    if (rsi > 70) return `<span style="color: red;">${params.valueFormatted}</span>`;
+                    if (rsi < 30) return `<span style="color: green;">${params.valueFormatted}</span>`;
+                    return params.valueFormatted;
+                }
+            },
+            { 
+                field: "ADX", 
+                type: "numericColumn",
+                valueFormatter: params => params.value?.toFixed(2)
+            }
+        ],
+        defaultColDef: {
+            flex: 1,
+            sortable: true,
+            filter: true,
+            resizable: true
+        },
+        enableRangeSelection: true,
+        rowSelection: "multiple",
+        suppressLoadingOverlay: true,
+        animateRows: true
+    };
+
+    const gridDiv = document.querySelector('#crypto-grid');
+    const api = agGrid.createGrid(gridDiv, gridOptions);
+    async function fetchMarketData() {
+        try {
+            const response = await fetch('/get_market_data/');
+            const data = await response.json();
+            if (data.success) {
+                // Store previous values for comparison
+                const currentRowData = api.getGridOption('rowData') || [];
+                const updatedData = data.data.map(newRow => {
+                    const existingRow = currentRowData.find(row => row.Symbol === newRow.Symbol);
+                    return {
+                        ...newRow,
+                        PrevPrice: existingRow ? existingRow.Price : undefined,
+                        PrevRSI: existingRow ? existingRow.RSI : undefined
+                    };
+                });
+
+                api.setGridOption('rowData', updatedData);
+            }
+        } catch (error) {
+            console.error('Error fetching market data:', error);
+        }
+    }
+
+    // Initial fetch
+    fetchMarketData();
+
+    // Poll every 5 seconds
+    setInterval(fetchMarketData, 5000);
+});
+</script>
+{% endblock %}
