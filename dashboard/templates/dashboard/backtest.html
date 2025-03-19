@@ -1,4 +1,3 @@
-
 <!-- dashboard/templates/dashboard/backtest.html -->
 {% extends 'dashboard/base.html' %}
 {% load static %}
@@ -10,7 +9,7 @@
         <div class="col-md-4">
             <label>Start Date</label>
             <input type="date" id="start-date" class="form-control bg-dark text-light" 
-                   value="{{ default_start|date:'Y-m-d' }}">
+                   value="{{ default_start|date:'Y-m-d' }}" min="2023-01-01">
         </div>
         <div class="col-md-4">
             <label>Symbol</label>
@@ -31,7 +30,7 @@
         <div class="col-md-4">
             <label>End Date</label>
             <input type="date" id="end-date" class="form-control bg-dark text-light" 
-                   value="{{ default_end|date:'Y-m-d' }}">
+                   value="{{ default_end|date:'Y-m-d' }}" min="2023-01-01">
         </div>
         <div class="col-md-4">
             <label>Timeframe</label>
@@ -51,6 +50,12 @@
     <div class="row">
         <div class="col">
             <button id="run-backtest" class="btn btn-primary">Run Backtest</button>
+            <div id="loading-indicator" class="d-none ms-3 d-inline-block">
+                <div class="spinner-border text-light" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <span class="text-light ms-2">Running backtest...</span>
+            </div>
         </div>
     </div>
 
@@ -79,7 +84,41 @@
 <script src="https://code.highcharts.com/stock/highstock.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Set minimum date to 2023-01-01 for date inputs
+    const minDate = "2023-01-01";
+    document.getElementById('start-date').setAttribute('min', minDate);
+    document.getElementById('end-date').setAttribute('min', minDate);
+    
+    // Validate that dates aren't before 2023
+    function validateDates() {
+        const startDate = document.getElementById('start-date');
+        const endDate = document.getElementById('end-date');
+        
+        if (startDate.value < minDate) {
+            startDate.value = minDate;
+        }
+        
+        if (endDate.value < minDate) {
+            endDate.value = minDate;
+        }
+    }
+    
+    // Add validation when inputs change
+    document.getElementById('start-date').addEventListener('change', validateDates);
+    document.getElementById('end-date').addEventListener('change', validateDates);
+    
+    // Run initial validation
+    validateDates();
+
     document.getElementById('run-backtest').addEventListener('click', function() {
+        // Show loading indicator
+        const loadingIndicator = document.getElementById('loading-indicator');
+        loadingIndicator.classList.remove('d-none');
+        
+        // Disable run button while processing
+        const runButton = document.getElementById('run-backtest');
+        runButton.disabled = true;
+        
         const params = {
             start_date: document.getElementById('start-date').value,
             end_date: document.getElementById('end-date').value,
@@ -88,6 +127,14 @@ document.addEventListener('DOMContentLoaded', function() {
             sensitivity: document.getElementById('sensitivity').value,
             atr_period: document.getElementById('atr-period').value
         };
+        
+        // Add validation for future dates
+        const today = new Date();
+        const endDate = new Date(params.end_date);
+        
+        if (endDate > today) {
+            alert("Warning: End date is in the future. Data may be limited or unavailable.");
+        }
 
         fetch('/run_backtest/', {
             method: 'POST',
@@ -99,12 +146,58 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
-            console.log(data);
+            console.log("Backtest data received:", data);
             if (data.success) {
-                updateChart(data.data.signals);
-                updateMetrics(data.data.metrics);
-                updatePnLTable(data.data.pnl_table);
+                try {
+                    // Validate we have signals data before updating chart
+                    if (data.data && data.data.signals && Array.isArray(data.data.signals) && data.data.signals.length > 0) {
+                        updateChart(data.data.signals);
+                    } else {
+                        document.getElementById('chart-container').innerHTML = 
+                            '<div class="alert alert-warning">No price data available for the selected period.</div>';
+                    }
+                    
+                    // Validate metrics data
+                    if (data.data && data.data.metrics && typeof data.data.metrics === 'object') {
+                        updateMetrics(data.data.metrics);
+                    } else {
+                        console.warn("Missing or invalid metrics data");
+                        document.querySelector('.row.mt-4').innerHTML = 
+                            '<div class="col-12"><div class="alert alert-warning">No metrics data available.</div></div>';
+                    }
+                    
+                    // Validate PnL table data with extra safety
+                    if (data.data && data.data.pnl_table && typeof data.data.pnl_table === 'object') {
+                        console.log("Processing PnL table data:", JSON.stringify(data.data.pnl_table).substring(0, 200) + "...");
+                        try {
+                            updatePnLTable(data.data.pnl_table);
+                        } catch (pnlError) {
+                            console.error("Error updating PnL table:", pnlError);
+                            document.getElementById('pnl-table').innerHTML = 
+                                '<div class="alert alert-warning">Could not process monthly returns data.</div>';
+                        }
+                    } else {
+                        console.warn("Missing or invalid PnL table data");
+                        document.getElementById('pnl-table').innerHTML = 
+                            '<div class="alert alert-warning">No monthly returns data available.</div>';
+                    }
+                } catch (err) {
+                    console.error("Error processing backtest results:", err);
+                    alert(`Error processing backtest results: ${err.message}`);
+                }
+            } else if (data.error) {
+                alert(`Error running backtest: ${data.error}`);
             }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert(`Failed to run backtest: ${error.message}`);
+        })
+        .finally(() => {
+            // Hide loading indicator
+            loadingIndicator.classList.add('d-none');
+            // Re-enable run button
+            runButton.disabled = false;
         });
     });
 
@@ -116,12 +209,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const chartConfig = {
         chart: {
             height: 800,
-            backgroundColor: '#0E1117',
-            style: {color: '#FFFFFF'}
+            backgroundColor: '#FFFFFF',  // White background
+            style: {color: '#000000'}    // Black text
         },
         title: {
             text: `Trading Strategy - ${document.getElementById('symbol').value} ${document.getElementById('timeframe').value}`,
-            style: {color: '#FFFFFF'}
+            style: {color: '#000000'}    // Black title text
         },
         series: [
             {
@@ -133,15 +226,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     parseFloat(x.High),
                     parseFloat(x.Low),
                     parseFloat(x.Close)
-                ])
+                ]),
+                color: '#000000',        // Downward candle color (black)
+                upColor: '#00CC00',      // Upward candle color (green)
+                lineColor: '#000000',    // Downward border color
+                upLineColor: '#007700'   // Upward border color (darker green)
             },
             {
                 type: 'scatter',
                 name: 'Buy Signals',
                 data: signals.filter(x => x.Buy).map(x => ({
                     x: new Date(x.Datetime).getTime(),
-                    y: parseFloat(x.Low),
-                    marker: {symbol: 'triangle', fillColor: '#00FF00'}
+                    y: parseFloat(x.Low) * 0.995, // Position slightly below the low price
+                    marker: {symbol: 'triangle', fillColor: 'yellow', lineWidth: 1, lineColor: '#000000', radius: 7}
                 }))
             },
             {
@@ -149,11 +246,115 @@ document.addEventListener('DOMContentLoaded', function() {
                 name: 'Sell Signals',
                 data: signals.filter(x => x.Sell).map(x => ({
                     x: new Date(x.Datetime).getTime(),
-                    y: parseFloat(x.High),
-                    marker: {symbol: 'triangle-down', fillColor: '#FF0000'}
+                    y: parseFloat(x.High) * 1.005, // Position slightly above the high price
+                    marker: {symbol: 'triangle-down', fillColor: '#FF0000', lineWidth: 1, lineColor: '#000000', radius: 7}
                 }))
             }
-        ]
+        ],
+        plotOptions: {
+            candlestick: {
+                lineWidth: 1,
+                color: '#000000',       // Downward candle color (black)
+                upColor: '#00CC00'      // Upward candle color (green)
+            }
+        },
+        xAxis: {
+            lineColor: '#CCCCCC',
+            tickColor: '#CCCCCC',
+            labels: {
+                style: {
+                    color: '#000000'
+                }
+            }
+        },
+        yAxis: {
+            gridLineColor: '#EEEEEE',
+            labels: {
+                style: {
+                    color: '#000000'
+                }
+            }
+        },
+        navigator: {
+            enabled: true,
+            outlineColor: '#CCCCCC',
+            handles: {
+                backgroundColor: '#FFFFFF',
+                borderColor: '#666666'
+            },
+            series: {
+                color: '#CCCCCC',
+                lineColor: '#666666'
+            }
+        },
+        scrollbar: {
+            barBackgroundColor: '#EEEEEE',
+            barBorderColor: '#CCCCCC',
+            buttonBackgroundColor: '#FFFFFF',
+            buttonBorderColor: '#CCCCCC',
+            trackBackgroundColor: '#FFFFFF',
+            trackBorderColor: '#EEEEEE'
+        },
+        tooltip: {
+            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+            borderColor: '#CCCCCC',
+            style: {
+                color: '#000000'
+            },
+            xDateFormat: '%b %e, %Y %H:%M',
+            shared: true,
+            useHTML: true,
+            formatter: function() {
+                // Safety check to ensure we have points
+                if (!this.points || this.points.length === 0) {
+                    return false; // Don't show tooltip if no points
+                }
+                
+                try {
+                    const date = Highcharts.dateFormat('%b %e, %Y %H:%M', this.x);
+                    let text = `<b>${date}</b><br/>`;
+                    
+                    // Add point-specific information
+                    this.points.forEach(function(pointObj) {
+                        if (!pointObj || !pointObj.series) return; // Skip invalid points
+                        
+                        const seriesName = pointObj.series.name;
+                        
+                        if (seriesName === 'Buy Signals') {
+                            text += `<span style="color:${pointObj.color || '#000000'}">●</span> <b>Buy Signal</b><br/>`;
+                            text += `Price: ${(pointObj.y || 0).toFixed(2)}<br/>`;
+                        } else if (seriesName === 'Sell Signals') {
+                            text += `<span style="color:${pointObj.color || '#FF0000'}">●</span> <b>Sell Signal</b><br/>`;
+                            text += `Price: ${(pointObj.y || 0).toFixed(2)}<br/>`;
+                        } else if (seriesName === 'Price') {
+                            // Safely access OHLC data
+                            if (pointObj.point) {
+                                const point = pointObj.point;
+                                const open = typeof point.open === 'number' ? point.open.toFixed(2) : 'N/A';
+                                const high = typeof point.high === 'number' ? point.high.toFixed(2) : 'N/A';
+                                const low = typeof point.low === 'number' ? point.low.toFixed(2) : 'N/A';
+                                const close = typeof point.close === 'number' ? point.close.toFixed(2) : 'N/A';
+                                
+                                text += `Open: ${open}<br/>`;
+                                text += `High: ${high}<br/>`;
+                                text += `Low: ${low}<br/>`;
+                                text += `Close: ${close}<br/>`;
+                            }
+                        }
+                    });
+                    
+                    return text;
+                } catch (error) {
+                    console.error('Error generating tooltip:', error);
+                    return `<b>${Highcharts.dateFormat('%b %e, %Y', this.x)}</b><br/>Error displaying details`;
+                }
+            }
+        },
+        legend: {
+            itemStyle: {
+                color: '#000000'
+            }
+        }
     };
 
     Highcharts.stockChart('chart-container', chartConfig);
@@ -207,15 +408,51 @@ function updateMetrics(metrics) {
 function updatePnLTable(pnlData) {
     const tableContainer = document.getElementById('pnl-table');
     
-    // Get unique years dynamically
-    const years = Object.keys(
-        Object.values(pnlData).reduce((acc, monthData) => {
-            Object.keys(monthData).forEach(year => {
-                acc[year] = true;
-            });
-            return acc;
-        }, {})
-    ).sort();
+    // Safely handle empty or invalid pnlData
+    if (!pnlData || Object.keys(pnlData).length === 0) {
+        tableContainer.innerHTML = '<div class="alert alert-warning">No monthly return data available for the selected period.</div>';
+        return;
+    }
+    
+    // Get unique years dynamically with extra safety checks
+    const years = [];
+    try {
+        // First check if pnlData has expected structure
+        if (pnlData && typeof pnlData === 'object') {
+            const hasValidData = Object.values(pnlData).some(monthData => 
+                monthData && typeof monthData === 'object' && Object.keys(monthData).length > 0
+            );
+            
+            if (hasValidData) {
+                const yearsSet = new Set();
+                
+                // Safely extract all valid years
+                Object.entries(pnlData).forEach(([month, monthData]) => {
+                    if (monthData && typeof monthData === 'object') {
+                        Object.keys(monthData).forEach(year => {
+                            // Only add valid years (strings that represent numbers)
+                            if (year && /^\d{4}$/.test(year)) {
+                                yearsSet.add(year);
+                            }
+                        });
+                    }
+                });
+                
+                // Sort years numerically
+                years.push(...Array.from(yearsSet).sort((a, b) => parseInt(a) - parseInt(b)));
+            }
+        }
+    } catch (error) {
+        console.error('Error processing years data:', error);
+        tableContainer.innerHTML = '<div class="alert alert-danger">Error processing monthly return data.</div>';
+        return;
+    }
+    
+    // If no valid years found
+    if (years.length === 0) {
+        tableContainer.innerHTML = '<div class="alert alert-warning">No data available for the selected period.</div>';
+        return;
+    }
     
     // Create table element
     const table = document.createElement('table');
@@ -254,12 +491,28 @@ function updatePnLTable(pnlData) {
         monthCell.textContent = month;
         row.appendChild(monthCell);
         
-        // Add value for each year
+        // Add value for each year with safety checks
         years.forEach(year => {
             const yearCell = document.createElement('td');
-            yearCell.textContent = pnlData[month][year] !== undefined 
-                ? pnlData[month][year].toFixed(2) 
-                : '-';
+            
+            try {
+                // Get month data or empty object
+                const monthData = pnlData[month] || {};
+                
+                // Safely access the value
+                const value = monthData[year];
+                
+                // Check if value is a valid number before using toFixed
+                if (value !== undefined && value !== null && typeof value === 'number' && !isNaN(value)) {
+                    yearCell.textContent = value.toFixed(2);
+                } else {
+                    yearCell.textContent = '-';
+                }
+            } catch (error) {
+                console.error(`Error processing data for ${month} ${year}:`, error);
+                yearCell.textContent = '-';
+            }
+            
             row.appendChild(yearCell);
         });
         
